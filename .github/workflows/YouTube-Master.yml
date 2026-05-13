@@ -1,0 +1,126 @@
+name: YouTube Master Downloader (Release + Auto Split)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube Video URL'
+        required: true
+        type: string
+      quality:
+        description: 'Quality (360, 480, 720, 1080, best)'
+        default: '720'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global http.postBuffer 524288000
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Start WARP Container
+        run: |
+          docker network create warp-net || true
+          docker run -d --name warp --restart=always --network warp-net -p 1080:1080 --cap-add NET_ADMIN caomingjun/warp
+          sleep 20
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip ffmpeg zip
+          curl -fsSL https://deno.land/install.sh | sh
+          export DENO_INSTALL="$HOME/.deno"
+          export PATH="$DENO_INSTALL/bin:$PATH"
+          echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
+          pip install --upgrade yt-dlp
+
+      - name: Download Video (Ourtube Method)
+        env:
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
+          QUALITY: ${{ github.event.inputs.quality }}
+          COOKIES: ${{ secrets.COOKIES }}
+        run: |
+          if [ -n "$COOKIES" ]; then
+            echo "$COOKIES" > cookies.txt
+            COOKIE_OPT="--cookies cookies.txt"
+          else
+            COOKIE_OPT=""
+          fi
+
+          if [ "$QUALITY" = "best" ]; then
+            FORMAT="bestvideo+bestaudio/best"
+          elif [ "$QUALITY" = "1080" ]; then
+            FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+          elif [ "$QUALITY" = "720" ]; then
+            FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]"
+          else
+            FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]"
+          fi
+
+          yt-dlp $COOKIE_OPT \
+            --proxy socks5://127.0.0.1:1080 \
+            --format "$FORMAT" \
+            --merge-output-format mp4 \
+            --output "video.%(ext)s" \
+            --extractor-args "youtube:player_client=web" \
+            --js-runtimes deno \
+            --remote-components ejs:github \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            "$VIDEO_URL"
+
+      - name: Stop WARP
+        if: always()
+        run: docker stop warp || true
+
+      - name: Prepare files for Release (split if needed)
+        id: prepare
+        run: |
+          # اگر فایل ویدیویی وجود دارد
+          if [ -f "video.mp4" ]; then
+            SIZE=$(stat -c%s "video.mp4")
+            echo "File size: $SIZE bytes"
+
+            if [ $SIZE -gt 80000000 ]; then
+              echo "File larger than 80MB, splitting into 80MB parts..."
+              zip -s 80m video.zip video.mp4
+              echo "split_done=true" >> $GITHUB_OUTPUT
+            else
+              echo "File size is within limit, no split needed"
+              echo "split_done=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No video.mp4 found"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: video-${{ github.run_number }}
+          name: "Downloaded Video #${{ github.run_number }}"
+          body: |
+            *Video URL: ${{ github.event.inputs.video_url }}
+            Quality: ${{ github.event.inputs.quality }}
+            Split: ${{ steps.prepare.outputs.split_done }}
+            Downloaded at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          files: |
+            video.mp4
+            video.zip
+            video.z
+          fail_on_unmatched_files: false
+          token: ${{ secrets.RELEASE_TOKEN }}
