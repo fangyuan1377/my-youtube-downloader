@@ -1,4 +1,4 @@
-name: YouTube Complete Ourtube Method
+name: YouTube Large File Downloader with Split
 
 on:
   workflow_dispatch:
@@ -27,63 +27,39 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Configure Git for Large Files
+      - name: Configure Git
         run: |
           git config --global http.postBuffer 524288000
-          git config --global http.maxRequestBuffer 100M
-          git config --global core.compression 0
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
       - name: Start WARP Container
         run: |
-          echo "Starting Cloudflare WARP container..."
           docker network create warp-net || true
-          docker run -d \
-            --name warp \
-            --restart=always \
-            --network warp-net \
-            -p 1080:1080 \
-            --cap-add NET_ADMIN \
-            --sysctl net.ipv6.conf.all.disable_ipv6=0 \
-            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
-            -v warp-data:/var/lib/cloudflare-warp \
-            caomingjun/warp
-          echo "Waiting for WARP to initialize (20 seconds)..."
+          docker run -d --name warp --restart=always --network warp-net -p 1080:1080 --cap-add NET_ADMIN caomingjun/warp
           sleep 20
-          for i in {1..5}; do
-            RESULT=$(curl -s --max-time 5 --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || echo "failed")
-            if echo "$RESULT" | grep -qE "warp=(on|plus)"; then
-              echo "WARP is active!"
-              break
-            else
-              echo "Attempt $i/5 - WARP not ready yet, waiting..."
-              sleep 5
-            fi
-          done
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip ffmpeg zip curl jq bc unzip
+          sudo apt-get install -y python3-pip ffmpeg zip
           curl -fsSL https://deno.land/install.sh | sh
           export DENO_INSTALL="$HOME/.deno"
           export PATH="$DENO_INSTALL/bin:$PATH"
           echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
-          deno --version
-          pip install --upgrade yt-dlp brotli certifi mutagen pycryptodomex websockets
+          pip install --upgrade yt-dlp
 
-      - name: Download Video with Full Ourtube Methods
+      - name: Download Video (Ourtube Method 1)
         env:
           VIDEO_URL: ${{ github.event.inputs.video_url }}
           QUALITY: ${{ github.event.inputs.quality }}
-          COOKIES_SECRET: ${{ secrets.COOKIES }}
+          COOKIES: ${{ secrets.COOKIES }}
         run: |
-          if [ -n "$COOKIES_SECRET" ]; then
-            echo "$COOKIES_SECRET" > cookies.txt
-            echo "Cookies loaded"
+          if [ -n "$COOKIES" ]; then
+            echo "$COOKIES" > cookies.txt
+            COOKIE_OPT="--cookies cookies.txt"
           else
-            echo "No cookies secret found. Proceeding without cookies."
+            COOKIE_OPT=""
           fi
 
           if [ "$QUALITY" = "best" ]; then
@@ -92,96 +68,41 @@ jobs:
             FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]"
           elif [ "$QUALITY" = "720" ]; then
             FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]"
-          elif [ "$QUALITY" = "480" ]; then
-            FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]"
           else
             FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]"
           fi
 
-          COMMON_FLAGS="--merge-output-format mp4 --write-thumbnail --convert-thumbnails jpg --no-cache-dir --output video.%(ext)s --no-part --no-playlist --retries 10 --fragment-retries 10 --no-check-certificates --concurrent-fragments 8 --buffer-size 16K --http-chunk-size 10M --progress --newline"
-          if [ -f cookies.txt ]; then
-            COMMON_FLAGS="$COMMON_FLAGS --cookies cookies.txt"
-          fi
+          yt-dlp $COOKIE_OPT \
+            --proxy socks5://127.0.0.1:1080 \
+            --format "$FORMAT" \
+            --merge-output-format mp4 \
+            --output "video.%(ext)s" \
+            --extractor-args "youtube:player_client=web" \
+            --js-runtimes deno \
+            --remote-components ejs:github \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            "$VIDEO_URL"
 
-          SUCCESS=0
-
-          # Method 1
-          echo "========================================="
-          echo "Trying method 1/8"
-          echo "========================================="
-          yt-dlp --proxy socks5://127.0.0.1:1080 --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=web" --js-runtimes deno --remote-components ejs:github --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 1 failed, trying method 2..."
-            yt-dlp --proxy socks5://127.0.0.1:1080 --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=web" --js-runtimes deno --remote-components ejs:npm --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 2 failed, trying method 3..."
-            yt-dlp --proxy socks5://127.0.0.1:1080 --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=web,mweb,android_vr" --js-runtimes deno --remote-components ejs:github --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 3 failed, trying method 4..."
-            yt-dlp --proxy socks5://127.0.0.1:1080 --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=mweb" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 4 failed, trying method 5..."
-            yt-dlp --proxy socks5://127.0.0.1:1080 --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=android_vr" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 5 failed, trying method 6..."
-            yt-dlp --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=web" --js-runtimes deno --remote-components ejs:github --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 6 failed, trying method 7..."
-            yt-dlp --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=mweb" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "Method 7 failed, trying method 8..."
-            yt-dlp --proxy socks5://127.0.0.1:1080 --format "$FORMAT" $COMMON_FLAGS --extractor-args "youtube:player_client=android" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "$VIDEO_URL" && SUCCESS=1
-          fi
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "All 8 methods failed."
-            exit 1
-          fi
-
-      - name: Stop WARP Container
+      - name: Stop WARP
         if: always()
+        run: docker stop warp || true
+
+      - name: Split and Upload Large Files
         run: |
-          docker stop warp || true
-          docker rm warp || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-     
-     # --- اینجا، مراحل دانلود ویدیو قرار دارند ---
+          # اگر فایل ویدیویی وجود دارد
+          if [ -f "video.mp4" ]; then
+            SIZE=$(stat -c%s "video.mp4")
+            if [ $SIZE -gt 80000000 ]; then
+              echo "File larger than 80MB, splitting into 80MB parts..."
+              zip -s 80m video.zip video.mp4
+              git add video.zip video.z* 2>/dev/null
+            else
+              git add video.mp4
+            fi
+          fi
 
-       - name: Split and upload large files
-         run: |
-           git config user.name "github-actions[bot]"
-           git config user.email "github-actions[bot]@users.noreply.github.com"
-    
-           # فایل های ویدیویی موجود را پیدا کن
-            for file in *.mp4 *.mkv *.webm; do
-           # اگر فایلی پیدا شد، سایز آن را بگیر
-            if [ -f "$file" ]; then
-               SIZE=$(stat -c%s "$file")
-               # اگر حجم فایل از 80 مگابایت بیشتر بود، آن را تکه‌تکه کن
-               if [ $SIZE -gt 80000000 ]; then
-                echo "File $file is larger than 80MB, splitting into 80MB parts..."
-                zip -s 80m "${file}.zip" "$file"
-                git add "${file}.zip" "${file}.z*" 2>/dev/null
-              else
-                # در غیر اینصورت، فایل کامل را اضافه کن
-                git add "$file"
-              fi
-           fi
-           done
-    
-           # تغییرات را در مخزن ذخیره کن
-           git commit -m "Add video file (auto-split if needed) [skip ci]" || echo "Nothing to commit"
-           git push
+          git commit -m "Add video (split if needed) [skip ci]" || echo "Nothing to commit"
+          git push
