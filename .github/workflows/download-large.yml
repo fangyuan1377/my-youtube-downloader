@@ -105,4 +105,20 @@ jobs:
           fi
 
           git commit -m "Add video (split if needed) [skip ci]" || echo "Nothing to commit"
-          git push
+          - name: Create GitHub Release
+            uses: softprops/action-gh-release@v2
+            with:
+             tag_name: video-${{ github.run_number }}
+             name: "Downloaded Video #${{ github.run_number }}"
+             body: |
+               **Video URL:** ${{ github.event.inputs.video_url }}
+               **Quality:** ${{ github.event.inputs.quality }}
+               **Downloaded at:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+             files: |
+               video.mp4
+               video.webm
+               video.mkv
+               *.zip
+               *.z*
+             fail_on_unmatched_files: false
+             token: ${{ secrets.RELEASE_TOKEN }}
