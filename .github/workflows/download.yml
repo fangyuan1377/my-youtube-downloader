@@ -1,15 +1,11 @@
-name: YouTube Free Downloader (Ourtube-like)
+name: YouTube 360p (Ourtube Method)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'YouTube video URL'
+        description: 'YouTube URL'
         required: true
-      quality:
-        description: 'Quality (best, 1080, 720, 480, audio)'
-        default: '720'
-        required: false
 
 permissions:
   contents: write
@@ -18,58 +14,29 @@ jobs:
   download:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python & Node.js
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install yt-dlp with extras
+      - name: Install deno & yt-dlp
         run: |
-          pip install --upgrade yt-dlp brotli certifi mutagen pycryptodomex websockets
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          pip install --upgrade yt-dlp
 
-      - name: Download with POT token method
+      - name: Download with Ourtube method 1 (no proxy)
         run: |
-          # آماده‌سازی کوکی در صورت وجود
-          if [ -n "${{ secrets.COOKIES }}" ]; then
-            echo "${{ secrets.COOKIES }}" > cookies.txt
-            COOKIE_OPT="--cookies cookies.txt"
-          else
-            COOKIE_OPT=""
-          fi
+          yt-dlp \
+            --format "bestvideo[height<=360]+bestaudio/best[height<=360]" \
+            --merge-output-format mp4 \
+            --extractor-args "youtube:player_client=web" \
+            --js-runtimes deno \
+            --remote-components ejs:github \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+            "${{ github.event.inputs.url }}"
 
-          QUALITY="${{ github.event.inputs.quality }}"
-          URL="${{ github.event.inputs.url }}"
-
-          # انتخاب کیفیت
-          if [ "$QUALITY" = "audio" ]; then
-            yt-dlp $COOKIE_OPT -f "bestaudio" --extract-audio --audio-format mp3 \
-              --extractor-args "youtube:player_client=android,web;player_skip=webpage;formats=missing_pot" \
-              "$URL"
-          elif [ "$QUALITY" = "best" ]; then
-            yt-dlp $COOKIE_OPT -f "bestvideo+bestaudio/best" --merge-output-format mp4 \
-              --extractor-args "youtube:player_client=android,web;player_skip=webpage;formats=missing_pot" \
-              "$URL"
-          else
-            # کیفیت عددی مثل 720، 480
-            yt-dlp $COOKIE_OPT -f "bestvideo[height<=$QUALITY]+bestaudio/best[height<=$QUALITY]" \
-              --merge-output-format mp4 \
-              --extractor-args "youtube:player_client=android,web;player_skip=webpage;formats=missing_pot" \
-              "$URL"
-          fi
-
-      - name: Upload video to repository
+      - name: Upload to repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.mp4 *.webm *.mkv *.mp3 2>/dev/null || echo "No media files"
-          git commit -m "Downloaded via free method [skip ci]" || echo "Nothing to commit"
+          git add *.mp4 *.mkv *.webm 2>/dev/null || echo "No files"
+          git commit -m "Add 360p video via Ourtube method" || echo "Nothing to commit"
           git push
