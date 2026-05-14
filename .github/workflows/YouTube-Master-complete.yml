@@ -1,0 +1,171 @@
+name: YouTube Master Complete with Cleanup & Custom Name
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube Video URL'
+        required: true
+        type: string
+      custom_name:
+        description: 'Custom name (without extension, optional)'
+        required: false
+        type: string
+        default: ''
+      quality:
+        description: 'Quality'
+        required: true
+        default: '720'
+        type: choice
+        options:
+          - best
+          - 1080
+          - 720
+          - 480
+          - 360
+          - 240
+          - 144
+          - audio
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global http.postBuffer 524288000
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Clean previous downloads
+        run: |
+          rm -rf YouTube_Downloads
+          mkdir -p YouTube_Downloads
+
+      - name: Start WARP
+        run: |
+          docker network create warp-net || true
+          docker run -d --name warp --restart=always --network warp-net -p 1080:1080 --cap-add NET_ADMIN caomingjun/warp
+          sleep 20
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip ffmpeg
+          curl -fsSL https://deno.land/install.sh | sh
+          export DENO_INSTALL="$HOME/.deno"
+          export PATH="$DENO_INSTALL/bin:$PATH"
+          echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
+          pip install --upgrade yt-dlp
+
+      - name: Download Media
+        id: download
+        env:
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
+          QUALITY: ${{ github.event.inputs.quality }}
+          CUSTOM_NAME: ${{ github.event.inputs.custom_name }}
+          COOKIES: ${{ secrets.COOKIES }}
+        run: |
+          if [ -n "$COOKIES" ]; then
+            echo "$COOKIES" > cookies.txt
+            COOKIE_OPT="--cookies cookies.txt"
+          else
+            COOKIE_OPT=""
+          fi
+
+          if [ -n "$CUSTOM_NAME" ]; then
+            SAFE_NAME=$(echo "$CUSTOM_NAME" | sed 's/[\\/:*?"<>|]/_/g')
+            TITLE="$SAFE_NAME"
+          else
+            TITLE=$(yt-dlp $COOKIE_OPT --get-title "$VIDEO_URL" | sed 's/[\\/:*?"<>|]/_/g')
+          fi
+          echo "TITLE=$TITLE" >> $GITHUB_ENV
+          FOLDER="YouTube_Downloads/$TITLE"
+          mkdir -p "$FOLDER"
+
+          if [ "$QUALITY" = "audio" ]; then
+            yt-dlp $COOKIE_OPT \
+              --proxy socks5://127.0.0.1:1080 \
+              -f "bestaudio" \
+              --extract-audio --audio-format mp3 \
+              --output "$FOLDER/$TITLE.%(ext)s" \
+              --extractor-args "youtube:player_client=web" \
+              --js-runtimes deno \
+              --remote-components ejs:github \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+              "$VIDEO_URL"
+            echo "FILE_TYPE=audio" >> $GITHUB_ENV
+          else
+            if [ "$QUALITY" = "best" ]; then
+              FORMAT="bestvideo+bestaudio/best"
+            elif [ "$QUALITY" = "1080" ]; then
+              FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+            elif [ "$QUALITY" = "720" ]; then
+              FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]"
+            elif [ "$QUALITY" = "480" ]; then
+              FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]"
+            elif [ "$QUALITY" = "360" ]; then
+              FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]"
+            elif [ "$QUALITY" = "240" ]; then
+              FORMAT="bestvideo[height<=240]+bestaudio/best[height<=240]"
+            else
+              FORMAT="bestvideo[height<=144]+bestaudio/best[height<=144]"
+            fi
+
+            yt-dlp $COOKIE_OPT \
+              --proxy socks5://127.0.0.1:1080 \
+              --format "$FORMAT" \
+              --merge-output-format mp4 \
+              --output "$FOLDER/$TITLE.%(ext)s" \
+              --extractor-args "youtube:player_client=web" \
+              --js-runtimes deno \
+              --remote-components ejs:github \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+              "$VIDEO_URL"
+            echo "FILE_TYPE=video" >> $GITHUB_ENV
+          fi
+
+      - name: Stop WARP
+        if: always()
+        run: docker stop warp || true
+
+      - name: Split & Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          FOLDER="YouTube_Downloads/$TITLE"
+          cd "$FOLDER"
+
+          if [ "$FILE_TYPE" = "audio" ]; then
+            FILE="${TITLE}.mp3"
+          else
+            FILE="${TITLE}.mp4"
+          fi
+
+          if [ ! -f "$FILE" ]; then
+            echo "File not found: $FILE"
+            exit 1
+          fi
+
+          SIZE=$(stat -c%s "$FILE")
+          if [ $SIZE -gt 80000000 ]; then
+            split -b 80m "$FILE" "${FILE}.part."
+            rm "$FILE"
+            printf "How to join parts (Windows):\n    copy /b %s.part.* %s\n\nLinux/Mac:\n    cat %s.part.* > %s\n" "${FILE}" "${FILE}" "${FILE}" "${FILE}" > README_join.txt
+          fi
+
+          cd ../..
+          git add "$FOLDER"
+          git commit -m "Add $TITLE [$QUALITY]" || echo "Nothing to commit"
+          git push
