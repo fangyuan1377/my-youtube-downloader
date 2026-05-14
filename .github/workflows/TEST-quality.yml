@@ -1,0 +1,42 @@
+name: Test Video Quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'YouTube URL'
+        required: true
+      quality:
+        description: 'Quality'
+        default: '1080'
+        type: choice
+        options:
+          - best
+          - 1080
+          - 720
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          pip install yt-dlp
+
+      - name: Download with format selector
+        env:
+          URL: ${{ github.event.inputs.url }}
+        run: |
+          echo "Downloading from: $URL"
+          yt-dlp -S "res:1080,br" --merge-output-format mp4 -o "test.mp4" "$URL"
+
+      - name: Upload
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add test.mp4 2>/dev/null && git commit -m "Test video" && git push
