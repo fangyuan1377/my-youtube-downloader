@@ -1,4 +1,4 @@
-name: YouTube Master Complete with Cleanup & Custom Name
+name: YouTube Master Complete with Quality Selector
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ on:
         required: true
         type: string
       custom_name:
-        description: 'Custom name (without extension, optional)'
+        description: 'Custom name (optional)'
         required: false
         type: string
         default: ''
       quality:
         description: 'Quality'
         required: true
-        default: '720'
+        default: 'best'
         type: choice
         options:
           - best
@@ -23,8 +23,6 @@ on:
           - 720
           - 480
           - 360
-          - 240
-          - 144
           - audio
 
 permissions:
@@ -52,7 +50,7 @@ jobs:
           rm -rf YouTube_Downloads
           mkdir -p YouTube_Downloads
 
-      - name: Start WARP
+      - name: Start WARP Container
         run: |
           docker network create warp-net || true
           docker run -d --name warp --restart=always --network warp-net -p 1080:1080 --cap-add NET_ADMIN caomingjun/warp
@@ -84,8 +82,7 @@ jobs:
           fi
 
           if [ -n "$CUSTOM_NAME" ]; then
-            SAFE_NAME=$(echo "$CUSTOM_NAME" | sed 's/[\\/:*?"<>|]/_/g')
-            TITLE="$SAFE_NAME"
+            TITLE=$(echo "$CUSTOM_NAME" | sed 's/[\\/:*?"<>|]/_/g')
           else
             TITLE=$(yt-dlp $COOKIE_OPT --get-title "$VIDEO_URL" | sed 's/[\\/:*?"<>|]/_/g')
           fi
@@ -94,7 +91,7 @@ jobs:
           mkdir -p "$FOLDER"
 
           if [ "$QUALITY" = "audio" ]; then
-            # Download video as temporary file for audio extraction
+            # Download 720p video then extract audio
             yt-dlp $COOKIE_OPT \
               --proxy socks5://127.0.0.1:1080 \
               -f "bestvideo[height<=720]+bestaudio/best[height<=720]" \
@@ -105,12 +102,11 @@ jobs:
               --remote-components ejs:github \
               --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
               "$VIDEO_URL"
-            # Extract audio to MP3 (high quality)
             ffmpeg -i "$FOLDER/$TITLE.temp.mp4" -vn -acodec libmp3lame -q:a 2 "$FOLDER/$TITLE.mp3"
             rm "$FOLDER/$TITLE.temp.mp4"
             echo "FILE_TYPE=audio" >> $GITHUB_ENV
           else
-            # High-quality video download using -S
+            # Video download with quality sorting
             yt-dlp $COOKIE_OPT \
               --proxy socks5://127.0.0.1:1080 \
               -S "res:1080,codec:av1:vp9.2:vp9,hdr:12,br" \
@@ -120,42 +116,37 @@ jobs:
               --js-runtimes deno \
               --remote-components ejs:github \
               --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-
-
               "$VIDEO_URL"
             echo "FILE_TYPE=video" >> $GITHUB_ENV
           fi
 
       - name: Stop WARP
         if: always()
+
+
         run: docker stop warp || true
 
       - name: Split & Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           FOLDER="YouTube_Downloads/$TITLE"
           cd "$FOLDER"
-
           if [ "$FILE_TYPE" = "audio" ]; then
             FILE="${TITLE}.mp3"
           else
             FILE="${TITLE}.mp4"
           fi
-
           if [ ! -f "$FILE" ]; then
             echo "File not found: $FILE"
             exit 1
           fi
-
           SIZE=$(stat -c%s "$FILE")
           if [ $SIZE -gt 80000000 ]; then
             split -b 80m "$FILE" "${FILE}.part."
             rm "$FILE"
             printf "How to join parts (Windows):\n    copy /b %s.part.* %s\n\nLinux/Mac:\n    cat %s.part.* > %s\n" "${FILE}" "${FILE}" "${FILE}" "${FILE}" > README_join.txt
           fi
-
           cd ../..
           git add "$FOLDER"
           git commit -m "Add $TITLE [$QUALITY]" || echo "Nothing to commit"
