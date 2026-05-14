@@ -122,16 +122,16 @@ jobs:
               FORMAT="bestvideo[height<=144]+bestaudio/best[height<=144]"
             fi
 
-            yt-dlp $COOKIE_OPT \
-              --proxy socks5://127.0.0.1:1080 \
-              --format "$FORMAT" \
-              --merge-output-format mp4 \
-              --output "$FOLDER/$TITLE.%(ext)s" \
-              --extractor-args "youtube:player_client=web" \
-              --js-runtimes deno \
-              --remote-components ejs:github \
-              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-              "$VIDEO_URL"
+           yt-dlp $COOKIE_OPT \
+             --proxy socks5://127.0.0.1:1080 \
+             -S "res:1080,codec:av1:vp9.2:vp9,hdr:12,br" \
+             --merge-output-format mp4 \
+             --output "$FOLDER/$TITLE.%(ext)s" \
+             --extractor-args "youtube:player_client=web" \
+             --js-runtimes deno \
+             --remote-components ejs:github \
+             --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+             "$VIDEO_URL"
             echo "FILE_TYPE=video" >> $GITHUB_ENV
           fi
 
