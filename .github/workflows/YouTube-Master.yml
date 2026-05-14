@@ -90,27 +90,30 @@ jobs:
       - name: Prepare files for Release (split if needed)
         id: prepare
         run: |
-          # حذف فایل‌های zip باقی‌مانده از اجراهای قبلی
-          rm -f video.zip video.z* 2>/dev/null || true
+           # حذف فایل‌های zip باقی‌مانده از اجراهای قبلی
+           rm -f video.zip video.z* 2>/dev/null || true
     
-          if [ -f "video.mp4" ]; then
-           SIZE=$(stat -c%s "video.mp4")
-           echo "File size: $SIZE bytes"
+           if [ -f "video.mp4" ]; then
+             SIZE=$(stat -c%s "video.mp4")
+             echo "File size: $SIZE bytes"
       
-           if [ $SIZE -gt 80000000 ]; then
-             echo "File larger than 80MB, splitting into 80MB parts..."
-             # استفاده از --out برای ایجاد split archive تازه
-            zip -s 80m --out video-split.zip video.mp4
-            mv video-split.zip video.zip
-            echo "split_done=true" >> $GITHUB_OUTPUT
-          else
-            echo "File size is within limit, no split needed"
-            echo "split_done=false" >> $GITHUB_OUTPUT
-          fi
-          else
-            echo "No video.mp4 found"
-            exit 1
-          fi
+             if [ $SIZE -gt 80000000 ]; then
+               echo "File larger than 80MB, splitting into 80MB parts..."
+               # مرحله 1: ساخت split archive با نام موقت
+               zip -s 80m --out video-split.zip video.mp4
+               # مرحله 2: تغییر نام فایل‌های ایجاد شده به نام اصلی
+               mv video-split.zip video.zip
+               # فایل‌های z01, z02 و ... به صورت خودکار با نام video.z01 و ... ایجاد می‌شوند
+               # نیازی به تغییر نام آن‌ها نیست
+               echo "split_done=true" >> $GITHUB_OUTPUT
+             else
+               echo "File size is within limit, no split needed"
+               echo "split_done=false" >> $GITHUB_OUTPUT
+             fi
+            else
+              echo "No video.mp4 found"
+              exit 1
+            fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
