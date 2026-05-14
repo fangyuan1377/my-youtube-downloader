@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'YouTube Video URL'
+        description: YouTube URL
         required: true
         type: string
       quality:
-        description: 'Quality (360, 480, 720, 1080, best)'
+        description: Quality
         default: '720'
         required: false
         type: string
@@ -89,7 +89,7 @@ jobs:
         if: always()
         run: docker stop warp || true
 
-      - name: Split Large File (if needed)
+      - name: Split Large File
         id: split
         run: |
           if [ -f "video.mp4" ]; then
@@ -99,19 +99,7 @@ jobs:
               echo "Splitting into 80MB parts..."
               split -b 80m video.mp4 video_part.
               echo "split_done=true" >> $GITHUB_OUTPUT
-              # راهنما
-              cat > README_join.txt << 'EOF'
-# How to join the video parts
-Download all files starting with "video_part." and run the appropriate command:
-
-**Windows (Command Prompt):**
-    copy /b video_part. video.mp4
-
-**Linux / Mac:**
-    cat video_part. > video.mp4
-
-After joining, you will get the original video.
-EOF
+              printf "How to join parts:\nWindows: copy /b video_part.* video.mp4\nLinux/Mac: cat video_part.* > video.mp4\n" > README_join.txt
             else
               echo "split_done=false" >> $GITHUB_OUTPUT
             fi
@@ -120,23 +108,18 @@ EOF
             exit 1
           fi
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: video-${{ github.run_number }}
-          name: "Downloaded Video #${{ github.run_number }}"
+          name: Downloaded Video ${{ github.run_number }}
           body: |
-            *Video URL: ${{ github.event.inputs.video_url }}
-            Quality:* ${{ github.e
-
-vent.inputs.quality }}
-            *Split: ${{ steps.split.outputs.split_done }}
-            Downloaded at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-
-            ${{ steps.split.outputs.split_done == 'true' && 'Note: File split into parts. See README_join.txt for instructions.' || '' }}
+            URL: ${{ github.event.inputs.video_url }}
+            Quality: ${{ github.event.inputs.quality }}
+            Split: ${{ steps.split.outputs.split_done }}
           files: |
             video.mp4
-            video_part.
+            video_part.*
             README_join.txt
           fail_on_unmatched_files: false
           token: ${{ secrets.RELEASE_TOKEN }}
