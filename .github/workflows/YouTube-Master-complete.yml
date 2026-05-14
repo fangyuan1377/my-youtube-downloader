@@ -94,44 +94,35 @@ jobs:
           mkdir -p "$FOLDER"
 
           if [ "$QUALITY" = "audio" ]; then
+            # Download video as temporary file for audio extraction
             yt-dlp $COOKIE_OPT \
               --proxy socks5://127.0.0.1:1080 \
-              -f "bestaudio" \
-              --extract-audio --audio-format mp3 \
-              --output "$FOLDER/$TITLE.%(ext)s" \
-              --extractor-args "youtube:player_client=web" \
+              -f "bestvideo[height<=720]+bestaudio/best[height<=720]" \
+              --merge-output-format mp4 \
+              --output "$FOLDER/$TITLE.temp.%(ext)s" \
+              --extractor-args "youtube:player_client=android,web;player_skip=webpage" \
               --js-runtimes deno \
               --remote-components ejs:github \
               --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
               "$VIDEO_URL"
+            # Extract audio to MP3 (high quality)
+            ffmpeg -i "$FOLDER/$TITLE.temp.mp4" -vn -acodec libmp3lame -q:a 2 "$FOLDER/$TITLE.mp3"
+            rm "$FOLDER/$TITLE.temp.mp4"
             echo "FILE_TYPE=audio" >> $GITHUB_ENV
           else
-            if [ "$QUALITY" = "best" ]; then
-              FORMAT="bestvideo+bestaudio/best"
-            elif [ "$QUALITY" = "1080" ]; then
-              FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]"
-            elif [ "$QUALITY" = "720" ]; then
-              FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]"
-            elif [ "$QUALITY" = "480" ]; then
-              FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]"
-            elif [ "$QUALITY" = "360" ]; then
-              FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]"
-            elif [ "$QUALITY" = "240" ]; then
-              FORMAT="bestvideo[height<=240]+bestaudio/best[height<=240]"
-            else
-              FORMAT="bestvideo[height<=144]+bestaudio/best[height<=144]"
-            fi
+            # High-quality video download using -S
+            yt-dlp $COOKIE_OPT \
+              --proxy socks5://127.0.0.1:1080 \
+              -S "res:1080,codec:av1:vp9.2:vp9,hdr:12,br" \
+              --merge-output-format mp4 \
+              --output "$FOLDER/$TITLE.%(ext)s" \
+              --extractor-args "youtube:player_client=android,web;player_skip=webpage" \
+              --js-runtimes deno \
+              --remote-components ejs:github \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
 
-           yt-dlp $COOKIE_OPT \
-             --proxy socks5://127.0.0.1:1080 \
-             -S "res:1080,codec:av1:vp9.2:vp9,hdr:12,br" \
-             --merge-output-format mp4 \
-             --output "$FOLDER/$TITLE.%(ext)s" \
-             --extractor-args "youtube:player_client=web" \
-             --js-runtimes deno \
-             --remote-components ejs:github \
-             --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-             "$VIDEO_URL"
+
+              "$VIDEO_URL"
             echo "FILE_TYPE=video" >> $GITHUB_ENV
           fi
 
